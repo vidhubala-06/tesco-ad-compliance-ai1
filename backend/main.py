@@ -4,9 +4,9 @@ from pydantic import BaseModel
 from typing import Optional
 
 try:
-    import rules
-    import scorer
-    import generator
+    from . import rules
+    from . import scorer
+    from . import generator
 except Exception as e:
     # Raise a clearer import error to help debugging when uvicorn starts
     raise ImportError(f"Failed to import backend modules (rules/scorer/generator): {e}") from e

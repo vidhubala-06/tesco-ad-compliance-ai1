@@ -1,5 +1,5 @@
 import { useState, useRef } from "react";
-import html2canvas from "html2canvas";
+import { toJpeg } from "html-to-image";
 
 function App() {
   const [headline, setHeadline] = useState("");
@@ -15,6 +15,8 @@ function App() {
   const [performanceData, setPerformanceData] = useState(null);
   const [multiRetailerAds, setMultiRetailerAds] = useState(null);
   const previewRef = useRef(null);
+  const transferRef = useRef(null);
+  const multiRef = useRef(null);
 
   const retailers = ["Tesco", "Walmart", "Amazon Fresh", "Sainsbury's", "Asda"];
   const retailerColors = {
@@ -147,35 +149,83 @@ function App() {
     }
   };
 
-  const downloadImage = async () => {
-    if (!previewRef.current) return;
+  const downloadImage = async (retailer) => {
+    let element;
+    let imgDataUrl = imageUrl;
+    if (retailer || activeTab === "transfer") {
+      const targetRetailer = retailer || selectedRetailer;
+      if (imageUrl) {
+        try {
+          const imgResp = await fetch(imageUrl);
+          const imgBlob = await imgResp.blob();
+          imgDataUrl = await new Promise((resolve) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result);
+            reader.readAsDataURL(imgBlob);
+          });
+        } catch (err) {
+          console.warn("Failed to fetch image as data URL, using original", err);
+        }
+      }
+      // Create a temporary full preview for the retailer
+      const tempDiv = document.createElement('div');
+      tempDiv.style.cssText = `
+        background: #fff;
+        border: 2px solid #e5e7eb;
+        border-radius: 10px;
+        padding: 15px;
+        text-align: center;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        margin: 0 auto;
+        font-family: 'Segoe UI', 'Roboto', sans-serif;
+        background: linear-gradient(135deg, ${retailerColors[targetRetailer]?.primary || "#667eea"}20 0%, ${retailerColors[targetRetailer]?.secondary || "#764ba2"}20 100%);
+        border: 3px solid ${retailerColors[targetRetailer]?.primary || "#667eea"};
+        display: inline-block;
+      `;
+      tempDiv.innerHTML = `
+        <h3 style="font-size: 1.2em; font-weight: bold; color: ${retailerColors[targetRetailer]?.primary || "#333"}; margin-bottom: 10px;">${headline}</h3>
+        ${imgDataUrl ? `<img src="${imgDataUrl}" alt="Product" style="border-radius: 8px; margin-bottom: 10px;">` : ''}
+        <p style="font-size: 1em; color: #555; margin-bottom: 15px;">${subhead}</p>
+        <button style="padding: 10px 20px; font-size: 1em; font-weight: 600; background: ${retailerColors[targetRetailer]?.primary || "#667eea"}; color: white; border: none; border-radius: 10px; cursor: pointer;">${cta}</button>
+      `;
+      document.body.appendChild(tempDiv);
+      element = tempDiv;
+    } else {
+      if (activeTab === "compliance") {
+        element = previewRef.current;
+      } else if (activeTab === "multiretailer") {
+        element = multiRef.current;
+      }
+    }
+    if (!element) {
+      alert("Preview not found.");
+      return;
+    }
     try {
-      const canvas = await html2canvas(previewRef.current, {
+      const dataUrl = await toJpeg(element, {
+        quality: 0.95,
         backgroundColor: "#ffffff",
       });
-      // get a JPEG data URL first to send to optimizer
-      const dataUrl = canvas.toDataURL("image/jpeg", 0.95);
 
-      // send to backend optimizer to ensure <500KB
-      let optimized = null;
-      try {
-        const resp = await fetch("http://127.0.0.1:8000/optimize", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ image_data: dataUrl, output_format: "jpeg", max_kb: 500 }),
-        });
-        const json = await resp.json();
-        if (json && json.data_url) optimized = json.data_url;
-      } catch (err) {
-        console.warn("Image optimization failed, using original image", err);
+      if (retailer || activeTab === "transfer") {
+        document.body.removeChild(element);
       }
 
+      const response = await fetch(dataUrl);
+      const blob = await response.blob();
+
+      const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
-      link.href = optimized || dataUrl || canvas.toDataURL();
-      link.download = `ad-preview-${Date.now()}.jpg`;
+      link.href = url;
+      link.download = `ad-preview-${retailer || selectedRetailer || 'general'}-${Date.now()}.jpg`;
+      document.body.appendChild(link);
       link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
     } catch (error) {
-      console.error("Error downloading image:", error);
+      if (retailer || activeTab === "transfer") {
+        document.body.removeChild(element);
+      }
       alert("Failed to download image. Please try again.");
     }
   };
@@ -367,6 +417,7 @@ function App() {
                   </label>
 
                   <div
+                    ref={transferRef}
                     style={{
                       ...previewCardStyle,
                       background: `linear-gradient(135deg, ${retailerColors[selectedRetailer]?.primary || "#667eea"}20 0%, ${retailerColors[selectedRetailer]?.secondary || "#764ba2"}20 100%)`,
@@ -391,6 +442,10 @@ function App() {
                   <p style={infoTextStyle}>
                     ✓ This ad has been styled to match {selectedRetailer}'s brand guidelines
                   </p>
+
+                  <button onClick={downloadImage} style={downloadButtonStyle}>
+                    ⬇️ Download
+                  </button>
                 </div>
               )}
 
@@ -467,9 +522,9 @@ function App() {
                   <h3 style={sectionTitleStyle}>🏪 One-Click Multi-Retailer Compliance Mode</h3>
                   {multiRetailerAds ? (
                     <>
-                      <div style={multiRetailerGridStyle}>
+                      <div ref={multiRef} style={multiRetailerGridStyle}>
                         {retailers.map((retailer) => (
-                          <div key={retailer} style={retailerCardStyle}>
+                          <div key={retailer} style={retailerCardStyle} data-retailer={retailer}>
                             <h4 style={{ color: retailerColors[retailer].primary, marginBottom: "10px" }}>
                               {retailer}
                             </h4>
@@ -484,6 +539,7 @@ function App() {
                               </p>
                             </div>
                             <button
+                              onClick={() => downloadImage(retailer)}
                               style={{
                                 ...downloadButtonStyle,
                                 background: retailerColors[retailer].primary,
